@@ -660,31 +660,6 @@ end
 -- ──────────────────────────────────────────────────────────────────────────────
 -- MAIN RENDER LOOP
 -- ──────────────────────────────────────────────────────────────────────────────
-local function getPlayerBox(char, hrp, hum)
-    local head = char:FindFirstChild("Head")
-    local topWorld = (head and head.Position or (hrp.Position + Vector3.new(0, 2.6, 0))) + Vector3.new(0, 0.65, 0)
-    local footOffset = math.max(2.8, (tonumber(hum.HipHeight) or 2) + 2)
-    local bottomWorld = hrp.Position - Vector3.new(0, footOffset, 0)
-
-    local top2, onTop, zTop = w2s(topWorld)
-    local bottom2, onBottom, zBottom = w2s(bottomWorld)
-    if zTop <= 0 or zBottom <= 0 then
-        return nil
-    end
-    if not onTop and not onBottom then
-        return nil
-    end
-
-    local h = math.abs(bottom2.Y - top2.Y)
-    if h < 2 then
-        return nil
-    end
-    local w = math.max(h * 0.52, 2)
-    local cx = (top2.X + bottom2.X) * 0.5
-    local cy = (top2.Y + bottom2.Y) * 0.5
-    return cx, cy, w, h, top2, bottom2
-end
-
 RunService.Heartbeat:Connect(function()
     Camera = workspace.CurrentCamera
     for plr, d in pairs(tracked) do
@@ -700,16 +675,20 @@ RunService.Heartbeat:Connect(function()
             local hum  = char:FindFirstChildOfClass("Humanoid")
             if not hrp or not hum then hideD(d) return end
 
+            local sv, onS = Camera:WorldToViewportPoint(hrp.Position)
+            if not onS then hideD(d) return end
+
             local me  = LP.Character
             local myR = me and me:FindFirstChild("HumanoidRootPart")
             if not myR then hideD(d) return end
             local dist = (hrp.Position - myR.Position).Magnitude
             if dist > M.MaxDist then hideD(d) return end
 
-            local cx, cy, w, h, top2 = getPlayerBox(char, hrp, hum)
-            if not cx then hideD(d) return end
-            local textScale = math.clamp(15 - (dist / 180), 9, 14)
-            local compact = h < 14
+            local tP = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0,3,0))
+            local bP = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0,3,0))
+            local h  = math.abs(bP.Y - tP.Y)
+            local w  = h / 2
+            local cx, cy = sv.X, sv.Y
 
             -- BOX
             if M.BoxEnabled then
@@ -723,20 +702,18 @@ RunService.Heartbeat:Connect(function()
 
             -- NAME
             if M.NameEnabled then
-                d.name.Size     = textScale
                 d.name.Text     = plr.DisplayName or plr.Name
-                d.name.Position = V2(cx, top2.Y - textScale - 4)
+                d.name.Position = V2(cx, cy - h/2 - 18)
                 d.name.Visible  = true
             else
                 d.name.Visible = false
             end
 
             -- TEAM
-            if M.TeamEnabled and not compact then
+            if M.TeamEnabled then
                 local teamName = plr.Team and plr.Team.Name or "No Team"
                 d.team.Text  = teamName
                 d.team.Color = plr.TeamColor and plr.TeamColor.Color or C3(255,255,255)
-                d.team.Size  = math.max(8, textScale - 1)
                 if M.BoxEnabled then
                     d.team.Position = V2(cx + w + 8, cy - h/2)
                     d.team.Visible  = true
@@ -755,17 +732,16 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- ROLE / CLASS
-            if M.RoleEnabled and not compact then
+            if M.RoleEnabled then
                 local roleName = getRoleName(plr)
                 if roleName then
                     d.role.Text = roleName
                     d.role.Color = C3(255, 255, 255)
-                    d.role.Size = math.max(8, textScale - 2)
                     if M.TeamEnabled and d.team.Visible then
-                        d.role.Position = V2(d.team.Position.X, d.team.Position.Y + d.team.Size + 1)
+                        d.role.Position = V2(d.team.Position.X, d.team.Position.Y + 14)
                         d.role.Visible = true
                     elseif M.BoxEnabled then
-                        d.role.Position = V2(cx + w + 8, cy - h/2 + d.team.Size + 1)
+                        d.role.Position = V2(cx + w + 8, cy - h/2 + 14)
                         d.role.Visible = true
                     else
                         local head = char:FindFirstChild("Head") or hrp
@@ -796,7 +772,7 @@ RunService.Heartbeat:Connect(function()
             --               which fires the moment the property replicates.
             --               We just read the cache here — zero polling lag.
             -- ──────────────────────────────────────────────────────────────
-            if M.HealthEnabled and not compact then
+            if M.HealthEnabled then
                 -- Ensure we have a live connection (safe to call every frame;
                 -- exits early if already connected)
                 if not d.hpConns then connectHpCache(plr) end
@@ -823,7 +799,7 @@ RunService.Heartbeat:Connect(function()
                 -- numeric label top-left of bar (e.g. "87")
                 d.hpLabel.Text     = tostring(math.floor(curHp))
                 d.hpLabel.Position = V2(bx - 12 - (math.max(0, #d.hpLabel.Text-2) * 3), bt - 4)
-                d.hpLabel.Size     = math.max(8, textScale - 2)
+                d.hpLabel.Size     = 10  -- tiny font
                 d.hpLabel.Center   = false
                 d.hpLabel.Visible  = true
             else
@@ -858,10 +834,9 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- HELD ITEM
-            if M.HeldItemEnabled and h >= 16 then
+            if M.HeldItemEnabled then
                 local tool = char:FindFirstChildWhichIsA("Tool")
                 if tool then
-                    d.heldItem.Size     = math.max(8, textScale - 1)
                     d.heldItem.Text     = tool.Name
                     d.heldItem.Position = V2(cx, cy + h/2 + 4)
                     d.heldItem.Visible  = true
