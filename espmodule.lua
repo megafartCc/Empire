@@ -17,6 +17,7 @@ M.SkeletonEnabled = false
 M.TeamEnabled    = false
 M.RoleEnabled    = false
 M.HeldItemEnabled = false
+M.AnimalEnabled = false
 M.MaxDist = 1000
 M.OreEnabledByName = {}
 M.ResourceEnabledByName = {}
@@ -24,6 +25,7 @@ M.ResourceEnabledByName = {}
 local tracked = {}
 local oreTracked = {}
 local resourceTracked = {}
+local animalTracked = {}
 local oreTypes = {}
 local resourceTypes = {}
 local oreNodeToType = {}
@@ -39,6 +41,14 @@ local resourceColors = {
     Raspberries = C3(238, 88, 123),
     Blueberries = C3(106, 161, 255),
     Blackberries = C3(137, 112, 201),
+}
+local animalColors = {
+    Deer = C3(197, 155, 109),
+    Rabbit = C3(238, 238, 238),
+    Bear = C3(106, 84, 70),
+    Wolf = C3(171, 171, 171),
+    Horse = C3(152, 119, 89),
+    Boar = C3(130, 92, 79),
 }
 
 local function oreAddType(name)
@@ -153,6 +163,47 @@ local function resolveResourceType(node)
     return nil
 end
 
+local function resolveAnimalName(rootPart)
+    if not rootPart then return nil end
+    local model = rootPart.Parent
+    if not model or not model.Parent then return nil end
+    if model.Name == "HumanoidModel" then return nil end
+
+    local raw = nil
+    for _, inst in ipairs({ model, rootPart }) do
+        for _, attrName in ipairs({ "AnimalType", "Species", "Type", "Animal", "HorseType" }) do
+            local attr = inst:GetAttribute(attrName)
+            if type(attr) == "string" and attr ~= "" then
+                raw = attr
+                break
+            end
+        end
+        if raw then break end
+    end
+    if not raw then
+        raw = model.Name
+    end
+    if type(raw) ~= "string" or raw == "" then
+        return nil
+    end
+
+    local key = string.lower(raw)
+    if string.find(key, "deer", 1, true) then return "Deer" end
+    if string.find(key, "rabbit", 1, true) then return "Rabbit" end
+    if string.find(key, "bear", 1, true) then return "Bear" end
+    if string.find(key, "wolf", 1, true) then return "Wolf" end
+    if string.find(key, "horse", 1, true) or string.find(key, "donkey", 1, true) then return "Horse" end
+    if string.find(key, "boar", 1, true) then return "Boar" end
+
+    local clean = string.gsub(raw, "HumanoidModel", "")
+    clean = string.gsub(clean, "^%s+", "")
+    clean = string.gsub(clean, "%s+$", "")
+    if clean == "" then
+        return nil
+    end
+    return clean
+end
+
 local function nodePos(node)
     if not node or not node.Parent then return nil end
     if node:IsA("BasePart") then
@@ -180,6 +231,12 @@ local function hideResource(data)
     end
 end
 
+local function hideAnimal(data)
+    if data and data.text then
+        data.text.Visible = false
+    end
+end
+
 local function untrackOre(node)
     local data = oreTracked[node]
     if not data then return end
@@ -200,6 +257,17 @@ local function untrackResource(node)
         end
     end)
     resourceTracked[node] = nil
+end
+
+local function untrackAnimal(node)
+    local data = animalTracked[node]
+    if not data then return end
+    pcall(function()
+        if data.text then
+            data.text:Remove()
+        end
+    end)
+    animalTracked[node] = nil
 end
 
 local function trackOre(node)
@@ -240,6 +308,26 @@ local function trackResource(node)
     resourceTracked[node] = data
 end
 
+local function trackAnimal(rootPart)
+    if animalTracked[rootPart] then return end
+    if not rootPart or not rootPart:IsA("BasePart") then return end
+    local animalName = resolveAnimalName(rootPart)
+    if not animalName then return end
+
+    local data = { animalName = animalName, text = nil }
+    local ok = pcall(function()
+        local t = Drawing.new("Text")
+        t.Visible = false
+        t.Size = 13
+        t.Center = true
+        t.Outline = true
+        t.Color = animalColors[animalName] or C3(255, 255, 255)
+        data.text = t
+    end)
+    if not ok or not data.text then return end
+    animalTracked[rootPart] = data
+end
+
 for _, node in ipairs(CollectionService:GetTagged("ResourceNode")) do
     pcall(trackOre, node)
     pcall(trackResource, node)
@@ -253,6 +341,18 @@ end)
 CollectionService:GetInstanceRemovedSignal("ResourceNode"):Connect(function(node)
     pcall(untrackOre, node)
     pcall(untrackResource, node)
+end)
+
+for _, rootPart in ipairs(CollectionService:GetTagged("AnimalRootPart")) do
+    pcall(trackAnimal, rootPart)
+end
+
+CollectionService:GetInstanceAddedSignal("AnimalRootPart"):Connect(function(rootPart)
+    pcall(trackAnimal, rootPart)
+end)
+
+CollectionService:GetInstanceRemovedSignal("AnimalRootPart"):Connect(function(rootPart)
+    pcall(untrackAnimal, rootPart)
 end)
 
 local function w2s(p)
@@ -560,6 +660,31 @@ end
 -- ──────────────────────────────────────────────────────────────────────────────
 -- MAIN RENDER LOOP
 -- ──────────────────────────────────────────────────────────────────────────────
+local function getPlayerBox(char, hrp, hum)
+    local head = char:FindFirstChild("Head")
+    local topWorld = (head and head.Position or (hrp.Position + Vector3.new(0, 2.6, 0))) + Vector3.new(0, 0.65, 0)
+    local footOffset = math.max(2.8, (tonumber(hum.HipHeight) or 2) + 2)
+    local bottomWorld = hrp.Position - Vector3.new(0, footOffset, 0)
+
+    local top2, onTop, zTop = w2s(topWorld)
+    local bottom2, onBottom, zBottom = w2s(bottomWorld)
+    if zTop <= 0 or zBottom <= 0 then
+        return nil
+    end
+    if not onTop and not onBottom then
+        return nil
+    end
+
+    local h = math.abs(bottom2.Y - top2.Y)
+    if h < 2 then
+        return nil
+    end
+    local w = math.max(h * 0.52, 2)
+    local cx = (top2.X + bottom2.X) * 0.5
+    local cy = (top2.Y + bottom2.Y) * 0.5
+    return cx, cy, w, h, top2, bottom2
+end
+
 RunService.Heartbeat:Connect(function()
     Camera = workspace.CurrentCamera
     for plr, d in pairs(tracked) do
@@ -575,20 +700,16 @@ RunService.Heartbeat:Connect(function()
             local hum  = char:FindFirstChildOfClass("Humanoid")
             if not hrp or not hum then hideD(d) return end
 
-            local sv, onS = Camera:WorldToViewportPoint(hrp.Position)
-            if not onS then hideD(d) return end
-
             local me  = LP.Character
             local myR = me and me:FindFirstChild("HumanoidRootPart")
             if not myR then hideD(d) return end
             local dist = (hrp.Position - myR.Position).Magnitude
             if dist > M.MaxDist then hideD(d) return end
 
-            local tP = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0,3,0))
-            local bP = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0,3,0))
-            local h  = math.abs(bP.Y - tP.Y)
-            local w  = h / 2
-            local cx, cy = sv.X, sv.Y
+            local cx, cy, w, h, top2 = getPlayerBox(char, hrp, hum)
+            if not cx then hideD(d) return end
+            local textScale = math.clamp(15 - (dist / 180), 9, 14)
+            local compact = h < 14
 
             -- BOX
             if M.BoxEnabled then
@@ -602,18 +723,20 @@ RunService.Heartbeat:Connect(function()
 
             -- NAME
             if M.NameEnabled then
+                d.name.Size     = textScale
                 d.name.Text     = plr.DisplayName or plr.Name
-                d.name.Position = V2(cx, cy - h/2 - 18)
+                d.name.Position = V2(cx, top2.Y - textScale - 4)
                 d.name.Visible  = true
             else
                 d.name.Visible = false
             end
 
             -- TEAM
-            if M.TeamEnabled then
+            if M.TeamEnabled and not compact then
                 local teamName = plr.Team and plr.Team.Name or "No Team"
                 d.team.Text  = teamName
                 d.team.Color = plr.TeamColor and plr.TeamColor.Color or C3(255,255,255)
+                d.team.Size  = math.max(8, textScale - 1)
                 if M.BoxEnabled then
                     d.team.Position = V2(cx + w + 8, cy - h/2)
                     d.team.Visible  = true
@@ -632,16 +755,17 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- ROLE / CLASS
-            if M.RoleEnabled then
+            if M.RoleEnabled and not compact then
                 local roleName = getRoleName(plr)
                 if roleName then
                     d.role.Text = roleName
                     d.role.Color = C3(255, 255, 255)
+                    d.role.Size = math.max(8, textScale - 2)
                     if M.TeamEnabled and d.team.Visible then
-                        d.role.Position = V2(d.team.Position.X, d.team.Position.Y + 14)
+                        d.role.Position = V2(d.team.Position.X, d.team.Position.Y + d.team.Size + 1)
                         d.role.Visible = true
                     elseif M.BoxEnabled then
-                        d.role.Position = V2(cx + w + 8, cy - h/2 + 14)
+                        d.role.Position = V2(cx + w + 8, cy - h/2 + d.team.Size + 1)
                         d.role.Visible = true
                     else
                         local head = char:FindFirstChild("Head") or hrp
@@ -672,7 +796,7 @@ RunService.Heartbeat:Connect(function()
             --               which fires the moment the property replicates.
             --               We just read the cache here — zero polling lag.
             -- ──────────────────────────────────────────────────────────────
-            if M.HealthEnabled then
+            if M.HealthEnabled and not compact then
                 -- Ensure we have a live connection (safe to call every frame;
                 -- exits early if already connected)
                 if not d.hpConns then connectHpCache(plr) end
@@ -699,7 +823,7 @@ RunService.Heartbeat:Connect(function()
                 -- numeric label top-left of bar (e.g. "87")
                 d.hpLabel.Text     = tostring(math.floor(curHp))
                 d.hpLabel.Position = V2(bx - 12 - (math.max(0, #d.hpLabel.Text-2) * 3), bt - 4)
-                d.hpLabel.Size     = 10  -- tiny font
+                d.hpLabel.Size     = math.max(8, textScale - 2)
                 d.hpLabel.Center   = false
                 d.hpLabel.Visible  = true
             else
@@ -734,9 +858,10 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- HELD ITEM
-            if M.HeldItemEnabled then
+            if M.HeldItemEnabled and h >= 16 then
                 local tool = char:FindFirstChildWhichIsA("Tool")
                 if tool then
+                    d.heldItem.Size     = math.max(8, textScale - 1)
                     d.heldItem.Text     = tool.Name
                     d.heldItem.Position = V2(cx, cy + h/2 + 4)
                     d.heldItem.Visible  = true
@@ -765,12 +890,17 @@ RunService.Heartbeat:Connect(function()
         end
     end
 
-    if not resourceAnyEnabled and not oreAnyEnabled then
+    local animalAnyEnabled = M.AnimalEnabled and true or false
+
+    if not resourceAnyEnabled and not oreAnyEnabled and not animalAnyEnabled then
         for _, data in pairs(resourceTracked) do
             hideResource(data)
         end
         for _, data in pairs(oreTracked) do
             hideOre(data)
+        end
+        for _, data in pairs(animalTracked) do
+            hideAnimal(data)
         end
         return
     end
@@ -783,6 +913,9 @@ RunService.Heartbeat:Connect(function()
         end
         for _, data in pairs(oreTracked) do
             hideOre(data)
+        end
+        for _, data in pairs(animalTracked) do
+            hideAnimal(data)
         end
         return
     end
@@ -896,6 +1029,58 @@ RunService.Heartbeat:Connect(function()
             hideOre(data)
         end
     end
+
+    if animalAnyEnabled then
+        for rootPart, data in pairs(animalTracked) do
+            pcall(function()
+                if not rootPart.Parent or not CollectionService:HasTag(rootPart, "AnimalRootPart") then
+                    untrackAnimal(rootPart)
+                    return
+                end
+
+                local model = rootPart.Parent
+                if not model or model.Name == "HumanoidModel" then
+                    hideAnimal(data)
+                    return
+                end
+
+                local hum = model:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health <= 0 then
+                    hideAnimal(data)
+                    return
+                end
+
+                local animalName = data.animalName or resolveAnimalName(rootPart)
+                if not animalName then
+                    hideAnimal(data)
+                    return
+                end
+                data.animalName = animalName
+
+                local pos = rootPart.Position
+                local dist = (pos - myRoot.Position).Magnitude
+                if dist > M.MaxDist then
+                    hideAnimal(data)
+                    return
+                end
+
+                local screen, on, z = w2s(pos + Vector3.new(0, 1.6, 0))
+                if not on or z <= 0 then
+                    hideAnimal(data)
+                    return
+                end
+
+                data.text.Text = animalName .. " [" .. tostring(math.floor(dist + 0.5)) .. "s]"
+                data.text.Position = screen
+                data.text.Color = animalColors[animalName] or C3(255, 255, 255)
+                data.text.Visible = true
+            end)
+        end
+    else
+        for _, data in pairs(animalTracked) do
+            hideAnimal(data)
+        end
+    end
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -936,6 +1121,8 @@ function API:SetSkeletonEsp(s)
     end
 end
 function API:SetHeldItemEsp(s) M.HeldItemEnabled = s end
+function API:SetAnimalEsp(s)   M.AnimalEnabled   = s end
+function API:SetAnimalsEsp(s)  M.AnimalEnabled   = s end
 function API:SetMaxDist(v)     M.MaxDist         = v end
 function API:GetResourceTypes()
     local out = {}
