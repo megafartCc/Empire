@@ -7,12 +7,12 @@ local CF = CFrame.new
 local C3 = Color3.fromRGB
 
 local M = {}
-M.BoxEnabled = false
-M.NameEnabled = false
-M.HealthEnabled = false
+M.BoxEnabled     = false
+M.NameEnabled    = false
+M.HealthEnabled  = false
 M.TracersEnabled = false
 M.SkeletonEnabled = false
-M.TeamEnabled = false
+M.TeamEnabled    = false
 M.HeldItemEnabled = false
 M.MaxDist = 1000
 
@@ -30,9 +30,46 @@ local function alive(p)
     return h and h.Health > 0
 end
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- HEALTH CACHE
+-- Empire Clash uses Knit's DamageService to apply damage server-side.
+-- Humanoid.Health is still replicated, BUT the HealthChanged signal fires
+-- reliably with the new value before the next Heartbeat catches it.
+-- We cache hp/maxHp per player and reconnect on every CharacterAdded so we
+-- always have a fresh connection regardless of respawn.
+-- ──────────────────────────────────────────────────────────────────────────────
+local function connectHpCache(plr)
+    local d = tracked[plr]
+    if not d then return end
+
+    -- Disconnect old HP listener if any
+    if d.hpConn then pcall(function() d.hpConn:Disconnect() end) end
+    d.hpConn = nil
+
+    local char = plr.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    -- Seed with current values immediately
+    d.cachedHp    = hum.Health
+    d.cachedMaxHp = math.max(hum.MaxHealth, 1)
+
+    -- Listen for every health change - this fires instantly when DamageService
+    -- applies damage, long before the next Heartbeat poll would notice.
+    d.hpConn = hum.HealthChanged:Connect(function(newHp)
+        d.cachedHp    = newHp
+        d.cachedMaxHp = math.max(hum.MaxHealth, 1)
+    end)
+end
+
 local function make(plr)
     if plr == LP or tracked[plr] then return end
     local d = {}
+    d.cachedHp    = 100
+    d.cachedMaxHp = 100
+    d.hpConn      = nil
+
     pcall(function()
         d.box = {}
         for i = 1, 4 do
@@ -62,14 +99,23 @@ local function make(plr)
         d.team.Center = false
         d.team.Outline = true
 
+        -- HP bar: background (black, thick) + fill (green→red)
         d.hpBg = Drawing.new("Line")
         d.hpBg.Visible = false
         d.hpBg.Color = C3(0,0,0)
-        d.hpBg.Thickness = 3
+        d.hpBg.Thickness = 4
 
         d.hpFill = Drawing.new("Line")
         d.hpFill.Visible = false
-        d.hpFill.Thickness = 2
+        d.hpFill.Thickness = 3
+
+        -- HP label showing exact value (e.g. "87 HP")
+        d.hpLabel = Drawing.new("Text")
+        d.hpLabel.Visible = false
+        d.hpLabel.Color = C3(255,255,255)
+        d.hpLabel.Size = 11
+        d.hpLabel.Center = true
+        d.hpLabel.Outline = true
 
         d.skel = {}
         d.skelBuilt = false
@@ -81,19 +127,24 @@ local function make(plr)
         d.heldItem.Center = true
         d.heldItem.Outline = true
     end)
+
     tracked[plr] = d
+    -- Seed HP cache for the current character (if already spawned)
+    connectHpCache(plr)
 end
 
 local function nuke(plr)
     local d = tracked[plr]
     if not d then return end
     pcall(function()
+        if d.hpConn then d.hpConn:Disconnect() end
         for _, l in ipairs(d.box or {}) do l:Remove() end
-        if d.tracer then d.tracer:Remove() end
-        if d.name then d.name:Remove() end
-        if d.team then d.team:Remove() end
-        if d.hpBg then d.hpBg:Remove() end
-        if d.hpFill then d.hpFill:Remove() end
+        if d.tracer   then d.tracer:Remove()   end
+        if d.name     then d.name:Remove()     end
+        if d.team     then d.team:Remove()     end
+        if d.hpBg     then d.hpBg:Remove()     end
+        if d.hpFill   then d.hpFill:Remove()   end
+        if d.hpLabel  then d.hpLabel:Remove()  end
         if d.heldItem then d.heldItem:Remove() end
         for _, l in ipairs(d.skel or {}) do l:Remove() end
     end)
@@ -130,18 +181,19 @@ end
 local function hideD(d)
     pcall(function()
         for _, l in ipairs(d.box or {}) do l.Visible = false end
-        if d.tracer then d.tracer.Visible = false end
-        if d.name then d.name.Visible = false end
-        if d.team then d.team.Visible = false end
-        if d.hpBg then d.hpBg.Visible = false end
-        if d.hpFill then d.hpFill.Visible = false end
+        if d.tracer   then d.tracer.Visible   = false end
+        if d.name     then d.name.Visible     = false end
+        if d.team     then d.team.Visible     = false end
+        if d.hpBg     then d.hpBg.Visible     = false end
+        if d.hpFill   then d.hpFill.Visible   = false end
+        if d.hpLabel  then d.hpLabel.Visible  = false end
         if d.heldItem then d.heldItem.Visible = false end
         for _, l in ipairs(d.skel or {}) do l.Visible = false end
     end)
 end
 
 local function drawSkelR6(d, char)
-    local head = char:FindFirstChild("Head")
+    local head  = char:FindFirstChild("Head")
     local torso = char:FindFirstChild("Torso")
     if not head or not torso then
         for _, l in ipairs(d.skel) do l.Visible = false end
@@ -152,19 +204,19 @@ local function drawSkelR6(d, char)
     local lL = char:FindFirstChild("Left Leg")
     local rL = char:FindFirstChild("Right Leg")
 
-    local tc = torso.CFrame
-    local neck = (tc * CF(0,1,0)).Position
-    local pelvis = (tc * CF(0,-1,0)).Position
-    local lS = (tc * CF(-1.5,1,0)).Position
-    local rS = (tc * CF(1.5,1,0)).Position
-    local lH = (tc * CF(-0.5,-1,0)).Position
-    local rH = (tc * CF(0.5,-1,0)).Position
-    local lHand = lA and (lA.CFrame * CF(0,-1,0)).Position or lS
-    local rHand = rA and (rA.CFrame * CF(0,-1,0)).Position or rS
-    local lFoot = lL and (lL.CFrame * CF(0,-1,0)).Position or lH
-    local rFoot = rL and (rL.CFrame * CF(0,-1,0)).Position or rH
+    local tc     = torso.CFrame
+    local neck   = (tc * CF(0, 1,   0)).Position
+    local pelvis = (tc * CF(0,-1,   0)).Position
+    local lS     = (tc * CF(-1.5, 1, 0)).Position
+    local rS     = (tc * CF( 1.5, 1, 0)).Position
+    local lH     = (tc * CF(-0.5,-1, 0)).Position
+    local rH     = (tc * CF( 0.5,-1, 0)).Position
+    local lHand  = lA and (lA.CFrame * CF(0,-1,0)).Position or lS
+    local rHand  = rA and (rA.CFrame * CF(0,-1,0)).Position or rS
+    local lFoot  = lL and (lL.CFrame * CF(0,-1,0)).Position or lH
+    local rFoot  = rL and (rL.CFrame * CF(0,-1,0)).Position or rH
 
-    local j = {
+    local joints = {
         {head.Position, neck},
         {lS, rS},
         {lS, lHand},
@@ -174,15 +226,13 @@ local function drawSkelR6(d, char)
         {lH, lFoot},
         {rH, rFoot},
     }
-    for i, p in ipairs(j) do
+    for i, p in ipairs(joints) do
         local l = d.skel[i]
         if l then
             local a, oA, zA = w2s(p[1])
             local b, oB, zB = w2s(p[2])
             if (oA or oB) and zA > 0 and zB > 0 then
-                l.From = a
-                l.To = b
-                l.Visible = true
+                l.From = a ; l.To = b ; l.Visible = true
             else
                 l.Visible = false
             end
@@ -192,16 +242,16 @@ end
 
 local function drawSkelR15(d, char)
     local head = char:FindFirstChild("Head")
-    local uT = char:FindFirstChild("UpperTorso")
-    local lT = char:FindFirstChild("LowerTorso")
-    local lUA = char:FindFirstChild("LeftUpperArm")
-    local lLA = char:FindFirstChild("LeftLowerArm")
-    local rUA = char:FindFirstChild("RightUpperArm")
-    local rLA = char:FindFirstChild("RightLowerArm")
-    local lUL = char:FindFirstChild("LeftUpperLeg")
-    local lLL = char:FindFirstChild("LeftLowerLeg")
-    local rUL = char:FindFirstChild("RightUpperLeg")
-    local rLL = char:FindFirstChild("RightLowerLeg")
+    local uT   = char:FindFirstChild("UpperTorso")
+    local lT   = char:FindFirstChild("LowerTorso")
+    local lUA  = char:FindFirstChild("LeftUpperArm")
+    local lLA  = char:FindFirstChild("LeftLowerArm")
+    local rUA  = char:FindFirstChild("RightUpperArm")
+    local rLA  = char:FindFirstChild("RightLowerArm")
+    local lUL  = char:FindFirstChild("LeftUpperLeg")
+    local lLL  = char:FindFirstChild("LeftLowerLeg")
+    local rUL  = char:FindFirstChild("RightUpperLeg")
+    local rLL  = char:FindFirstChild("RightLowerLeg")
 
     if not head or not uT then
         for _, l in ipairs(d.skel) do l.Visible = false end
@@ -210,10 +260,10 @@ local function drawSkelR15(d, char)
 
     local parts = {
         {head, uT}, {uT, lT},
-        {uT, lUA}, {lUA, lLA},
-        {uT, rUA}, {rUA, rLA},
-        {lT, lUL}, {lUL, lLL},
-        {lT, rUL}, {rUL, rLL},
+        {uT,  lUA}, {lUA, lLA},
+        {uT,  rUA}, {rUA, rLA},
+        {lT,  lUL}, {lUL, lLL},
+        {lT,  rUL}, {rUL, rLL},
     }
     for i, p in ipairs(parts) do
         local l = d.skel[i]
@@ -222,9 +272,7 @@ local function drawSkelR15(d, char)
                 local a, oA, zA = w2s(p[1].Position)
                 local b, oB, zB = w2s(p[2].Position)
                 if (oA or oB) and zA > 0 and zB > 0 then
-                    l.From = a
-                    l.To = b
-                    l.Visible = true
+                    l.From = a ; l.To = b ; l.Visible = true
                 else
                     l.Visible = false
                 end
@@ -235,6 +283,9 @@ local function drawSkelR15(d, char)
     end
 end
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- MAIN RENDER LOOP
+-- ──────────────────────────────────────────────────────────────────────────────
 RunService.Heartbeat:Connect(function()
     Camera = workspace.CurrentCamera
     for plr, d in pairs(tracked) do
@@ -246,14 +297,14 @@ RunService.Heartbeat:Connect(function()
             end
 
             local char = plr.Character
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            local hum = char:FindFirstChildOfClass("Humanoid")
+            local hrp  = char:FindFirstChild("HumanoidRootPart")
+            local hum  = char:FindFirstChildOfClass("Humanoid")
             if not hrp or not hum then hideD(d) return end
 
             local sv, onS = Camera:WorldToViewportPoint(hrp.Position)
             if not onS then hideD(d) return end
 
-            local me = LP.Character
+            local me  = LP.Character
             local myR = me and me:FindFirstChild("HumanoidRootPart")
             if not myR then hideD(d) return end
             local dist = (hrp.Position - myR.Position).Magnitude
@@ -261,49 +312,43 @@ RunService.Heartbeat:Connect(function()
 
             local tP = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0,3,0))
             local bP = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0,3,0))
-            local h = math.abs(bP.Y - tP.Y)
-            local w = h / 2
+            local h  = math.abs(bP.Y - tP.Y)
+            local w  = h / 2
             local cx, cy = sv.X, sv.Y
 
+            -- BOX
             if M.BoxEnabled then
-                d.box[1].From = V2(cx-w, cy-h/2)
-                d.box[1].To = V2(cx+w, cy-h/2)
-                d.box[1].Visible = true
-                d.box[2].From = V2(cx-w, cy+h/2)
-                d.box[2].To = V2(cx+w, cy+h/2)
-                d.box[2].Visible = true
-                d.box[3].From = V2(cx-w, cy-h/2)
-                d.box[3].To = V2(cx-w, cy+h/2)
-                d.box[3].Visible = true
-                d.box[4].From = V2(cx+w, cy-h/2)
-                d.box[4].To = V2(cx+w, cy+h/2)
-                d.box[4].Visible = true
+                d.box[1].From = V2(cx-w, cy-h/2) ; d.box[1].To = V2(cx+w, cy-h/2) ; d.box[1].Visible = true
+                d.box[2].From = V2(cx-w, cy+h/2) ; d.box[2].To = V2(cx+w, cy+h/2) ; d.box[2].Visible = true
+                d.box[3].From = V2(cx-w, cy-h/2) ; d.box[3].To = V2(cx-w, cy+h/2) ; d.box[3].Visible = true
+                d.box[4].From = V2(cx+w, cy-h/2) ; d.box[4].To = V2(cx+w, cy+h/2) ; d.box[4].Visible = true
             else
                 for i=1,4 do d.box[i].Visible = false end
             end
 
+            -- NAME
             if M.NameEnabled then
-                d.name.Text = plr.DisplayName or plr.Name
+                d.name.Text     = plr.DisplayName or plr.Name
                 d.name.Position = V2(cx, cy - h/2 - 18)
-                d.name.Visible = true
+                d.name.Visible  = true
             else
                 d.name.Visible = false
             end
 
+            -- TEAM
             if M.TeamEnabled then
-                local teamName = "No Team"
-                if plr.Team then teamName = plr.Team.Name end
-                d.team.Text = teamName
+                local teamName = plr.Team and plr.Team.Name or "No Team"
+                d.team.Text  = teamName
                 d.team.Color = plr.TeamColor and plr.TeamColor.Color or C3(255,255,255)
                 if M.BoxEnabled then
-                    d.team.Position = V2(cx + w + 8, cy - h / 2)
-                    d.team.Visible = true
+                    d.team.Position = V2(cx + w + 8, cy - h/2)
+                    d.team.Visible  = true
                 else
                     local head = char:FindFirstChild("Head") or hrp
-                    local hv, hon, hz = w2s(head.Position + Vector3.new(0, 0.45, 0))
+                    local hv, hon, hz = w2s(head.Position + Vector3.new(0,0.45,0))
                     if hon and hz > 0 then
                         d.team.Position = V2(hv.X + 10, hv.Y - 8)
-                        d.team.Visible = true
+                        d.team.Visible  = true
                     else
                         d.team.Visible = false
                     end
@@ -312,33 +357,64 @@ RunService.Heartbeat:Connect(function()
                 d.team.Visible = false
             end
 
+            -- ──────────────────────────────────────────────────────────────
+            -- HEALTH ESP  (fixed for Empire Clash)
+            --
+            -- Problem was:  hum.Health polled every frame — when DamageService
+            --               applies damage server-side, the replicated value
+            --               can lag behind and then snap, so the bar would
+            --               stutter or not move at all until GC'd.
+            --
+            -- Fix:          d.cachedHp is updated instantly via HealthChanged
+            --               which fires the moment the property replicates.
+            --               We just read the cache here — zero polling lag.
+            -- ──────────────────────────────────────────────────────────────
             if M.HealthEnabled then
-                local hp = hum.Health / hum.MaxHealth
-                local bx = cx - w - 5
-                local bt = cy - h/2
-                local bb = cy + h/2
-                d.hpBg.From = V2(bx, bb)
-                d.hpBg.To = V2(bx, bt)
+                -- Ensure we have a live connection (safe to call every frame;
+                -- exits early if already connected)
+                if not d.hpConn then connectHpCache(plr) end
+
+                local maxHp = d.cachedMaxHp or 100
+                local curHp = math.clamp(d.cachedHp or 100, 0, maxHp)
+                local frac  = curHp / maxHp  -- 0..1
+
+                local bx = cx - w - 6   -- left of box
+                local bt = cy - h/2      -- top
+                local bb = cy + h/2      -- bottom
+
+                -- background (full black bar)
+                d.hpBg.From    = V2(bx, bb)
+                d.hpBg.To      = V2(bx, bt)
                 d.hpBg.Visible = true
-                d.hpFill.From = V2(bx, bb)
-                d.hpFill.To = V2(bx, bb - (bb-bt)*hp)
-                d.hpFill.Color = C3(255,0,0):Lerp(C3(0,255,0), hp)
+
+                -- fill (green at full hp, red at 0)
+                d.hpFill.From    = V2(bx, bb)
+                d.hpFill.To      = V2(bx, bb - (bb - bt) * frac)
+                d.hpFill.Color   = C3(255,0,0):Lerp(C3(0,255,0), frac)
                 d.hpFill.Visible = true
+
+                -- numeric label below bar (e.g. "87")
+                d.hpLabel.Text     = tostring(math.floor(curHp))
+                d.hpLabel.Position = V2(bx, bb + 2)
+                d.hpLabel.Visible  = true
             else
-                d.hpBg.Visible = false
-                d.hpFill.Visible = false
+                d.hpBg.Visible    = false
+                d.hpFill.Visible  = false
+                d.hpLabel.Visible = false
             end
 
+            -- TRACERS
             if M.TracersEnabled then
                 local ox = Camera.ViewportSize.X / 2
                 local oy = Camera.ViewportSize.Y
-                d.tracer.From = V2(ox, oy)
-                d.tracer.To = V2(cx, cy + h/2)
+                d.tracer.From    = V2(ox, oy)
+                d.tracer.To      = V2(cx, cy + h/2)
                 d.tracer.Visible = true
             else
                 d.tracer.Visible = false
             end
 
+            -- SKELETON
             if M.SkeletonEnabled then
                 if not d.skelBuilt then buildSkel(plr) end
                 if hum.RigType == Enum.HumanoidRigType.R15 then
@@ -352,12 +428,13 @@ RunService.Heartbeat:Connect(function()
                 end
             end
 
+            -- HELD ITEM
             if M.HeldItemEnabled then
                 local tool = char:FindFirstChildWhichIsA("Tool")
                 if tool then
-                    d.heldItem.Text = tool.Name
+                    d.heldItem.Text     = tool.Name
                     d.heldItem.Position = V2(cx, cy + h/2 + 4)
-                    d.heldItem.Visible = true
+                    d.heldItem.Visible  = true
                 else
                     d.heldItem.Visible = false
                 end
@@ -368,12 +445,17 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- PLAYER TRACKING
+-- ──────────────────────────────────────────────────────────────────────────────
 local function onPlr(plr)
     if plr == LP then return end
     pcall(function()
         make(plr)
+        -- Reconnect HP cache AND rebuild skeleton on every respawn
         plr.CharacterAdded:Connect(function()
-            task.wait(0.5)
+            task.wait(0.5)  -- short wait for Humanoid to be parented
+            pcall(connectHpCache, plr)
             pcall(buildSkel, plr)
         end)
     end)
@@ -383,13 +465,16 @@ for _, p in ipairs(Players:GetPlayers()) do pcall(onPlr, p) end
 Players.PlayerAdded:Connect(function(p) pcall(onPlr, p) end)
 Players.PlayerRemoving:Connect(function(p) pcall(nuke, p) end)
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- PUBLIC API  (unchanged surface — Empireclash.lua calls these)
+-- ──────────────────────────────────────────────────────────────────────────────
 local API = {}
 function API:Init() end
-function API:SetBoxEsp(s) M.BoxEnabled = s end
-function API:SetNameEsp(s) M.NameEnabled = s end
-function API:SetHealthEsp(s) M.HealthEnabled = s end
-function API:SetTracers(s) M.TracersEnabled = s end
-function API:SetTeamEsp(s) M.TeamEnabled = s end
+function API:SetBoxEsp(s)      M.BoxEnabled      = s end
+function API:SetNameEsp(s)     M.NameEnabled     = s end
+function API:SetHealthEsp(s)   M.HealthEnabled   = s end
+function API:SetTracers(s)     M.TracersEnabled  = s end
+function API:SetTeamEsp(s)     M.TeamEnabled     = s end
 function API:SetSkeletonEsp(s)
     M.SkeletonEnabled = s
     if s then
@@ -397,5 +482,5 @@ function API:SetSkeletonEsp(s)
     end
 end
 function API:SetHeldItemEsp(s) M.HeldItemEnabled = s end
-function API:SetMaxDist(v) M.MaxDist = v end
+function API:SetMaxDist(v)     M.MaxDist         = v end
 return API
