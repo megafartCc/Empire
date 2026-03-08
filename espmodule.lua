@@ -15,6 +15,7 @@ M.HealthEnabled  = false
 M.TracersEnabled = false
 M.SkeletonEnabled = false
 M.TeamEnabled    = false
+M.RoleEnabled    = false
 M.HeldItemEnabled = false
 M.MaxDist = 1000
 M.OreEnabledByName = {}
@@ -310,6 +311,21 @@ local function connectHpCache(plr)
     table.insert(d.hpConns, hum.HealthChanged:Connect(readHp))
 end
 
+local function getRoleName(plr)
+    if not plr then return nil end
+    local leaderstats = plr:FindFirstChild("leaderstats")
+    local classValue = leaderstats and leaderstats:FindFirstChild("Class")
+    local role = classValue and tostring(classValue.Value) or nil
+    local disguised = plr:GetAttribute("DisguisedClass")
+    if type(disguised) == "string" and disguised ~= "" then
+        role = disguised
+    end
+    if type(role) == "string" and role ~= "" then
+        return role
+    end
+    return nil
+end
+
 local function make(plr)
     if plr == LP or tracked[plr] then return end
     local d = {}
@@ -345,6 +361,13 @@ local function make(plr)
         d.team.Size = 13
         d.team.Center = false
         d.team.Outline = true
+
+        d.role = Drawing.new("Text")
+        d.role.Visible = false
+        d.role.Color = C3(255,255,255)
+        d.role.Size = 12
+        d.role.Center = false
+        d.role.Outline = true
 
         -- HP bar: background (black, thick) + fill (green→red)
         d.hpBg = Drawing.new("Line")
@@ -391,6 +414,7 @@ local function nuke(plr)
         if d.tracer   then d.tracer:Remove()   end
         if d.name     then d.name:Remove()     end
         if d.team     then d.team:Remove()     end
+        if d.role     then d.role:Remove()     end
         if d.hpBg     then d.hpBg:Remove()     end
         if d.hpFill   then d.hpFill:Remove()   end
         if d.hpLabel  then d.hpLabel:Remove()  end
@@ -433,6 +457,7 @@ local function hideD(d)
         if d.tracer   then d.tracer.Visible   = false end
         if d.name     then d.name.Visible     = false end
         if d.team     then d.team.Visible     = false end
+        if d.role     then d.role.Visible     = false end
         if d.hpBg     then d.hpBg.Visible     = false end
         if d.hpFill   then d.hpFill.Visible   = false end
         if d.hpLabel  then d.hpLabel.Visible  = false end
@@ -604,6 +629,35 @@ RunService.Heartbeat:Connect(function()
                 end
             else
                 d.team.Visible = false
+            end
+
+            -- ROLE / CLASS
+            if M.RoleEnabled then
+                local roleName = getRoleName(plr)
+                if roleName then
+                    d.role.Text = roleName
+                    d.role.Color = C3(255, 255, 255)
+                    if M.TeamEnabled and d.team.Visible then
+                        d.role.Position = V2(d.team.Position.X, d.team.Position.Y + 14)
+                        d.role.Visible = true
+                    elseif M.BoxEnabled then
+                        d.role.Position = V2(cx + w + 8, cy - h/2 + 14)
+                        d.role.Visible = true
+                    else
+                        local head = char:FindFirstChild("Head") or hrp
+                        local hv, hon, hz = w2s(head.Position + Vector3.new(0, 0.15, 0))
+                        if hon and hz > 0 then
+                            d.role.Position = V2(hv.X + 10, hv.Y + 6)
+                            d.role.Visible = true
+                        else
+                            d.role.Visible = false
+                        end
+                    end
+                else
+                    d.role.Visible = false
+                end
+            else
+                d.role.Visible = false
             end
 
             -- ──────────────────────────────────────────────────────────────
@@ -874,6 +928,7 @@ function API:SetNameEsp(s)     M.NameEnabled     = s end
 function API:SetHealthEsp(s)   M.HealthEnabled   = s end
 function API:SetTracers(s)     M.TracersEnabled  = s end
 function API:SetTeamEsp(s)     M.TeamEnabled     = s end
+function API:SetRoleEsp(s)     M.RoleEnabled     = s end
 function API:SetSkeletonEsp(s)
     M.SkeletonEnabled = s
     if s then
