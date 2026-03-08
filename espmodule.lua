@@ -18,15 +18,26 @@ M.TeamEnabled    = false
 M.HeldItemEnabled = false
 M.MaxDist = 1000
 M.OreEnabledByName = {}
+M.ResourceEnabledByName = {}
 
 local tracked = {}
 local oreTracked = {}
+local resourceTracked = {}
 local oreTypes = {}
+local resourceTypes = {}
 local oreNodeToType = {}
+local resourceNodeToType = {}
 local oreColors = {
     Coal = C3(165, 165, 165),
     Gold = C3(255, 220, 65),
     Iron = C3(185, 210, 255),
+}
+local resourceColors = {
+    Wood = C3(142, 102, 74),
+    Wheat = C3(232, 214, 118),
+    Raspberries = C3(238, 88, 123),
+    Blueberries = C3(106, 161, 255),
+    Blackberries = C3(137, 112, 201),
 }
 
 local function oreAddType(name)
@@ -36,6 +47,13 @@ local function oreAddType(name)
     table.insert(oreTypes, name)
 end
 
+local function resourceAddType(name)
+    if type(name) ~= "string" or name == "" then return end
+    if M.ResourceEnabledByName[name] ~= nil then return end
+    M.ResourceEnabledByName[name] = false
+    table.insert(resourceTypes, name)
+end
+
 local function oreMapNode(nodeName, oreName)
     if type(nodeName) ~= "string" or nodeName == "" then return end
     if type(oreName) ~= "string" or oreName == "" then return end
@@ -43,7 +61,14 @@ local function oreMapNode(nodeName, oreName)
     oreAddType(oreName)
 end
 
-local function loadOreConfig()
+local function resourceMapNode(nodeName, resourceName)
+    if type(nodeName) ~= "string" or nodeName == "" then return end
+    if type(resourceName) ~= "string" or resourceName == "" then return end
+    resourceNodeToType[string.lower(nodeName)] = resourceName
+    resourceAddType(resourceName)
+end
+
+local function loadGatheringConfig()
     local ok, config = pcall(function()
         local modules = ReplicatedStorage:FindFirstChild("Modules")
         local module = modules and modules:FindFirstChild("ResourceNodeConfig")
@@ -56,10 +81,13 @@ local function loadOreConfig()
     if ok and type(config) == "table" then
         for nodeName, info in pairs(config) do
             if type(nodeName) == "string" and type(info) == "table" then
-                if tostring(info.ToolType or "") == "Pickaxe" then
-                    local oreName = info.ResourceName or info.NodeName or nodeName
-                    if type(oreName) == "string" and oreName ~= "" then
-                        oreMapNode(nodeName, oreName)
+                local toolType = tostring(info.ToolType or "")
+                local nodeTypeName = info.ResourceName or info.NodeName or nodeName
+                if type(nodeTypeName) == "string" and nodeTypeName ~= "" then
+                    if toolType == "Pickaxe" then
+                        oreMapNode(nodeName, nodeTypeName)
+                    else
+                        resourceMapNode(nodeName, nodeTypeName)
                     end
                 end
             end
@@ -72,9 +100,30 @@ local function loadOreConfig()
         oreMapNode("iron node", "Iron")
     end
 
+    if next(resourceNodeToType) == nil then
+        resourceMapNode("tree", "Wood")
+        resourceMapNode("tree1", "Wood")
+        resourceMapNode("tree2", "Wood")
+        resourceMapNode("tree3", "Wood")
+        resourceMapNode("tree4", "Wood")
+        resourceMapNode("tree5", "Wood")
+        resourceMapNode("tree6", "Wood")
+        resourceMapNode("tree7", "Wood")
+        resourceMapNode("tree8", "Wood")
+        resourceMapNode("redwood tree1", "Wood")
+        resourceMapNode("redwood tree2", "Wood")
+        resourceMapNode("redwood tree3", "Wood")
+        resourceMapNode("wheat", "Wheat")
+        resourceMapNode("blueberry bush", "Blueberries")
+        resourceMapNode("blackberry bush", "Blackberries")
+        resourceMapNode("raspberry bush", "Raspberries")
+        resourceMapNode("snowberry bush", "Raspberries")
+    end
+
     table.sort(oreTypes)
+    table.sort(resourceTypes)
 end
-loadOreConfig()
+loadGatheringConfig()
 
 local function resolveOreType(node)
     if not node or not node.Name then return nil end
@@ -87,7 +136,23 @@ local function resolveOreType(node)
     return nil
 end
 
-local function oreNodePos(node)
+local function resolveResourceType(node)
+    if not node or not node.Name then return nil end
+    local key = string.lower(node.Name)
+    local resourceName = resourceNodeToType[key]
+    if resourceName then return resourceName end
+    if oreNodeToType[key] then return nil end
+    if string.find(key, "tree", 1, true) then return "Wood" end
+    if string.find(key, "wheat", 1, true) then return "Wheat" end
+    if string.find(key, "blueberry", 1, true) then return "Blueberries" end
+    if string.find(key, "blackberry", 1, true) then return "Blackberries" end
+    if string.find(key, "raspberry", 1, true) or string.find(key, "snowberry", 1, true) then
+        return "Raspberries"
+    end
+    return nil
+end
+
+local function nodePos(node)
     if not node or not node.Parent then return nil end
     if node:IsA("BasePart") then
         return node.Position
@@ -108,6 +173,12 @@ local function hideOre(data)
     end
 end
 
+local function hideResource(data)
+    if data and data.text then
+        data.text.Visible = false
+    end
+end
+
 local function untrackOre(node)
     local data = oreTracked[node]
     if not data then return end
@@ -117,6 +188,17 @@ local function untrackOre(node)
         end
     end)
     oreTracked[node] = nil
+end
+
+local function untrackResource(node)
+    local data = resourceTracked[node]
+    if not data then return end
+    pcall(function()
+        if data.text then
+            data.text:Remove()
+        end
+    end)
+    resourceTracked[node] = nil
 end
 
 local function trackOre(node)
@@ -138,16 +220,38 @@ local function trackOre(node)
     oreTracked[node] = data
 end
 
+local function trackResource(node)
+    if resourceTracked[node] then return end
+    local resourceName = resolveResourceType(node)
+    if not resourceName then return end
+
+    local data = { resourceName = resourceName, text = nil }
+    local ok = pcall(function()
+        local t = Drawing.new("Text")
+        t.Visible = false
+        t.Size = 13
+        t.Center = true
+        t.Outline = true
+        t.Color = resourceColors[resourceName] or C3(255, 255, 255)
+        data.text = t
+    end)
+    if not ok or not data.text then return end
+    resourceTracked[node] = data
+end
+
 for _, node in ipairs(CollectionService:GetTagged("ResourceNode")) do
     pcall(trackOre, node)
+    pcall(trackResource, node)
 end
 
 CollectionService:GetInstanceAddedSignal("ResourceNode"):Connect(function(node)
     pcall(trackOre, node)
+    pcall(trackResource, node)
 end)
 
 CollectionService:GetInstanceRemovedSignal("ResourceNode"):Connect(function(node)
     pcall(untrackOre, node)
+    pcall(untrackResource, node)
 end)
 
 local function w2s(p)
@@ -591,6 +695,14 @@ RunService.Heartbeat:Connect(function()
         end)
     end
 
+    local resourceAnyEnabled = false
+    for _, enabled in pairs(M.ResourceEnabledByName) do
+        if enabled then
+            resourceAnyEnabled = true
+            break
+        end
+    end
+
     local oreAnyEnabled = false
     for _, enabled in pairs(M.OreEnabledByName) do
         if enabled then
@@ -599,7 +711,10 @@ RunService.Heartbeat:Connect(function()
         end
     end
 
-    if not oreAnyEnabled then
+    if not resourceAnyEnabled and not oreAnyEnabled then
+        for _, data in pairs(resourceTracked) do
+            hideResource(data)
+        end
         for _, data in pairs(oreTracked) do
             hideOre(data)
         end
@@ -609,59 +724,123 @@ RunService.Heartbeat:Connect(function()
     local myChar = LP.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then
+        for _, data in pairs(resourceTracked) do
+            hideResource(data)
+        end
         for _, data in pairs(oreTracked) do
             hideOre(data)
         end
         return
     end
 
-    for node, data in pairs(oreTracked) do
-        pcall(function()
-            if not node.Parent or not CollectionService:HasTag(node, "ResourceNode") then
-                untrackOre(node)
-                return
-            end
+    if resourceAnyEnabled then
+        for node, data in pairs(resourceTracked) do
+            pcall(function()
+                if not node.Parent or not CollectionService:HasTag(node, "ResourceNode") then
+                    untrackResource(node)
+                    return
+                end
 
-            local oreName = data.oreName or resolveOreType(node)
-            if not oreName then
-                hideOre(data)
-                return
-            end
-            data.oreName = oreName
+                local resourceName = data.resourceName or resolveResourceType(node)
+                if not resourceName then
+                    hideResource(data)
+                    return
+                end
+                data.resourceName = resourceName
 
-            if not M.OreEnabledByName[oreName] then
-                hideOre(data)
-                return
-            end
+                if not M.ResourceEnabledByName[resourceName] then
+                    hideResource(data)
+                    return
+                end
 
-            if node:GetAttribute("Gatherable") == false then
-                hideOre(data)
-                return
-            end
+                if node:GetAttribute("Gatherable") == false then
+                    hideResource(data)
+                    return
+                end
 
-            local pos = oreNodePos(node)
-            if not pos then
-                hideOre(data)
-                return
-            end
+                local pos = nodePos(node)
+                if not pos then
+                    hideResource(data)
+                    return
+                end
 
-            local dist = (pos - myRoot.Position).Magnitude
-            if dist > M.MaxDist then
-                hideOre(data)
-                return
-            end
+                local dist = (pos - myRoot.Position).Magnitude
+                if dist > M.MaxDist then
+                    hideResource(data)
+                    return
+                end
 
-            local screen, on, z = w2s(pos + Vector3.new(0, 1.4, 0))
-            if not on or z <= 0 then
-                hideOre(data)
-                return
-            end
+                local screen, on, z = w2s(pos + Vector3.new(0, 1.4, 0))
+                if not on or z <= 0 then
+                    hideResource(data)
+                    return
+                end
 
-            data.text.Text = oreName .. " [" .. tostring(math.floor(dist + 0.5)) .. "s]"
-            data.text.Position = screen
-            data.text.Color = oreColors[oreName] or C3(255, 255, 255)
-            data.text.Visible = true
-        end)
+                data.text.Text = resourceName .. " [" .. tostring(math.floor(dist + 0.5)) .. "s]"
+                data.text.Position = screen
+                data.text.Color = resourceColors[resourceName] or C3(255, 255, 255)
+                data.text.Visible = true
+            end)
+        end
+    else
+        for _, data in pairs(resourceTracked) do
+            hideResource(data)
+        end
+    end
+
+    if oreAnyEnabled then
+        for node, data in pairs(oreTracked) do
+            pcall(function()
+                if not node.Parent or not CollectionService:HasTag(node, "ResourceNode") then
+                    untrackOre(node)
+                    return
+                end
+
+                local oreName = data.oreName or resolveOreType(node)
+                if not oreName then
+                    hideOre(data)
+                    return
+                end
+                data.oreName = oreName
+
+                if not M.OreEnabledByName[oreName] then
+                    hideOre(data)
+                    return
+                end
+
+                if node:GetAttribute("Gatherable") == false then
+                    hideOre(data)
+                    return
+                end
+
+                local pos = nodePos(node)
+                if not pos then
+                    hideOre(data)
+                    return
+                end
+
+                local dist = (pos - myRoot.Position).Magnitude
+                if dist > M.MaxDist then
+                    hideOre(data)
+                    return
+                end
+
+                local screen, on, z = w2s(pos + Vector3.new(0, 1.4, 0))
+                if not on or z <= 0 then
+                    hideOre(data)
+                    return
+                end
+
+                data.text.Text = oreName .. " [" .. tostring(math.floor(dist + 0.5)) .. "s]"
+                data.text.Position = screen
+                data.text.Color = oreColors[oreName] or C3(255, 255, 255)
+                data.text.Visible = true
+            end)
+        end
+    else
+        for _, data in pairs(oreTracked) do
+            hideOre(data)
+        end
     end
 end)
 
@@ -703,6 +882,30 @@ function API:SetSkeletonEsp(s)
 end
 function API:SetHeldItemEsp(s) M.HeldItemEnabled = s end
 function API:SetMaxDist(v)     M.MaxDist         = v end
+function API:GetResourceTypes()
+    local out = {}
+    for _, resourceName in ipairs(resourceTypes) do
+        table.insert(out, resourceName)
+    end
+    return out
+end
+function API:SetResourceTypeEsp(name, state)
+    if type(name) ~= "string" or name == "" then return end
+    if M.ResourceEnabledByName[name] == nil then
+        resourceAddType(name)
+        table.sort(resourceTypes)
+    end
+    M.ResourceEnabledByName[name] = state and true or false
+end
+function API:SetAllResourcesEsp(state)
+    local enabled = state and true or false
+    for resourceName in pairs(M.ResourceEnabledByName) do
+        M.ResourceEnabledByName[resourceName] = enabled
+    end
+end
+function API:SetResourceEsp(state)
+    self:SetAllResourcesEsp(state)
+end
 function API:GetOreTypes()
     local out = {}
     for _, oreName in ipairs(oreTypes) do
