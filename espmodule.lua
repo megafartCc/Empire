@@ -661,6 +661,18 @@ end
 -- MAIN RENDER LOOP
 -- ──────────────────────────────────────────────────────────────────────────────
 local function getPlayerBox(char, hrp, hum)
+    local function fallbackBox()
+        local center2, onCenter, zCenter = w2s(hrp.Position)
+        if zCenter <= 0 or not onCenter then
+            return nil
+        end
+        local h = math.clamp(2400 / math.max(zCenter, 1), 6, 260)
+        local w = math.max(h * 0.52, 3)
+        local top2 = V2(center2.X, center2.Y - h * 0.5)
+        local bottom2 = V2(center2.X, center2.Y + h * 0.5)
+        return center2.X, center2.Y, w, h, top2, bottom2
+    end
+
     local head = char:FindFirstChild("Head")
     local topWorld = (head and head.Position or (hrp.Position + Vector3.new(0, 2.6, 0))) + Vector3.new(0, 0.65, 0)
     local footOffset = math.max(2.8, (tonumber(hum.HipHeight) or 2) + 2)
@@ -668,16 +680,16 @@ local function getPlayerBox(char, hrp, hum)
 
     local top2, onTop, zTop = w2s(topWorld)
     local bottom2, onBottom, zBottom = w2s(bottomWorld)
-    if zTop <= 0 or zBottom <= 0 then
-        return nil
+    if zTop <= 0 and zBottom <= 0 then
+        return fallbackBox()
     end
     if not onTop and not onBottom then
-        return nil
+        return fallbackBox()
     end
 
     local h = math.abs(bottom2.Y - top2.Y)
     if h < 2 then
-        return nil
+        return fallbackBox()
     end
     local w = math.max(h * 0.52, 2)
     local cx = (top2.X + bottom2.X) * 0.5
@@ -709,7 +721,6 @@ RunService.Heartbeat:Connect(function()
             local cx, cy, w, h, top2 = getPlayerBox(char, hrp, hum)
             if not cx then hideD(d) return end
             local textScale = math.clamp(15 - (dist / 180), 9, 14)
-            local compact = h < 14
 
             -- BOX
             if M.BoxEnabled then
@@ -732,7 +743,7 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- TEAM
-            if M.TeamEnabled and not compact then
+            if M.TeamEnabled then
                 local teamName = plr.Team and plr.Team.Name or "No Team"
                 d.team.Text  = teamName
                 d.team.Color = plr.TeamColor and plr.TeamColor.Color or C3(255,255,255)
@@ -755,7 +766,7 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- ROLE / CLASS
-            if M.RoleEnabled and not compact then
+            if M.RoleEnabled then
                 local roleName = getRoleName(plr)
                 if roleName then
                     d.role.Text = roleName
@@ -796,7 +807,7 @@ RunService.Heartbeat:Connect(function()
             --               which fires the moment the property replicates.
             --               We just read the cache here — zero polling lag.
             -- ──────────────────────────────────────────────────────────────
-            if M.HealthEnabled and not compact then
+            if M.HealthEnabled then
                 -- Ensure we have a live connection (safe to call every frame;
                 -- exits early if already connected)
                 if not d.hpConns then connectHpCache(plr) end
@@ -858,7 +869,7 @@ RunService.Heartbeat:Connect(function()
             end
 
             -- HELD ITEM
-            if M.HeldItemEnabled and h >= 16 then
+            if M.HeldItemEnabled and h >= 8 then
                 local tool = char:FindFirstChildWhichIsA("Tool")
                 if tool then
                     d.heldItem.Size     = math.max(8, textScale - 1)
