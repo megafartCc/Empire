@@ -393,9 +393,11 @@ RunService.Heartbeat:Connect(function()
                 d.hpFill.Color   = C3(255,0,0):Lerp(C3(0,255,0), frac)
                 d.hpFill.Visible = true
 
-                -- numeric label below bar (e.g. "87")
+                -- numeric label top-left of bar (e.g. "87")
                 d.hpLabel.Text     = tostring(math.floor(curHp))
-                d.hpLabel.Position = V2(bx, bb + 2)
+                d.hpLabel.Position = V2(bx - 12 - (math.max(0, #d.hpLabel.Text-2) * 3), bt - 4)
+                d.hpLabel.Size     = 10  -- tiny font
+                d.hpLabel.Center   = false
                 d.hpLabel.Visible  = true
             else
                 d.hpBg.Visible    = false
