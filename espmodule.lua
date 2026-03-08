@@ -43,24 +43,35 @@ local function connectHpCache(plr)
     if not d then return end
 
     -- Disconnect old HP listener if any
-    if d.hpConn then pcall(function() d.hpConn:Disconnect() end) end
-    d.hpConn = nil
+    if d.hpConns then
+        for _, c in ipairs(d.hpConns) do pcall(function() c:Disconnect() end) end
+    end
+    d.hpConns = {}
 
     local char = plr.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
 
+    -- Empire Clash custom health Attributes reading
+    local function readHp()
+        local attrHp = hum:GetAttribute("Health")
+        if attrHp then
+            d.cachedHp    = attrHp
+            d.cachedMaxHp = hum:GetAttribute("MaxHealth") or 100
+        else
+            d.cachedHp    = hum.Health
+            d.cachedMaxHp = math.max(hum.MaxHealth, 1)
+        end
+    end
+
     -- Seed with current values immediately
-    d.cachedHp    = hum.Health
-    d.cachedMaxHp = math.max(hum.MaxHealth, 1)
+    readHp()
 
     -- Listen for every health change - this fires instantly when DamageService
     -- applies damage, long before the next Heartbeat poll would notice.
-    d.hpConn = hum.HealthChanged:Connect(function(newHp)
-        d.cachedHp    = newHp
-        d.cachedMaxHp = math.max(hum.MaxHealth, 1)
-    end)
+    table.insert(d.hpConns, hum:GetAttributeChangedSignal("Health"):Connect(readHp))
+    table.insert(d.hpConns, hum.HealthChanged:Connect(readHp))
 end
 
 local function make(plr)
@@ -68,7 +79,7 @@ local function make(plr)
     local d = {}
     d.cachedHp    = 100
     d.cachedMaxHp = 100
-    d.hpConn      = nil
+    d.hpConns     = nil
 
     pcall(function()
         d.box = {}
@@ -137,7 +148,9 @@ local function nuke(plr)
     local d = tracked[plr]
     if not d then return end
     pcall(function()
-        if d.hpConn then d.hpConn:Disconnect() end
+        if d.hpConns then
+            for _, c in ipairs(d.hpConns) do pcall(function() c:Disconnect() end) end
+        end
         for _, l in ipairs(d.box or {}) do l:Remove() end
         if d.tracer   then d.tracer:Remove()   end
         if d.name     then d.name:Remove()     end
@@ -372,7 +385,7 @@ RunService.Heartbeat:Connect(function()
             if M.HealthEnabled then
                 -- Ensure we have a live connection (safe to call every frame;
                 -- exits early if already connected)
-                if not d.hpConn then connectHpCache(plr) end
+                if not d.hpConns then connectHpCache(plr) end
 
                 local maxHp = d.cachedMaxHp or 100
                 local curHp = math.clamp(d.cachedHp or 100, 0, maxHp)
